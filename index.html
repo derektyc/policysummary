@@ -142,6 +142,8 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 
 .mobile-pdf-pages{display:flex;flex-direction:column;align-items:center;gap:14px;padding:4px 0 16px}.mobile-pdf-page{display:block;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 3px 12px rgba(15,30,45,.10)}.pdf-preview-loading,.pdf-preview-fallback{min-height:220px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;color:var(--muted);padding:24px}.pdf-preview-fallback b{color:var(--navy)}.pdf-preview-fallback span{max-width:420px;font-size:12px;line-height:1.5}
 .preview-body{min-height:300px}.preview-body iframe{width:100%;height:68vh;border:1px solid var(--line);border-radius:10px}.preview-body img{display:block;max-width:100%;max-height:68vh;margin:auto;border-radius:10px}.preview-text{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:1.5;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:14px;max-height:68vh;overflow:auto}
+.pdf-page-selector{border:1px solid var(--line);border-radius:12px;background:#f8fafc;padding:12px;margin-bottom:12px}.pdf-page-selector-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:9px}.pdf-page-selector-title{font-size:12px;font-weight:850;color:var(--navy)}.pdf-page-selector-count{font-size:11px;color:var(--muted);font-weight:750}.pdf-page-selector-actions{display:flex;gap:7px;flex-wrap:wrap}.pdf-page-selector-actions .btn{padding:6px 9px;font-size:11px}.pdf-page-checkboxes{display:flex;gap:7px;flex-wrap:wrap;max-height:112px;overflow:auto;padding:2px}.pdf-page-check{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;background:#fff;padding:7px 9px;font-size:11px;font-weight:750;color:var(--navy);cursor:pointer;user-select:none}.pdf-page-check input{width:17px;height:17px;margin:0;accent-color:var(--navy)}.pdf-page-check:has(input:checked){border-color:var(--gold);background:#fffaf0}.generated-pdf-viewer{min-height:260px}
+@media(max-width:560px){.pdf-page-selector{padding:10px}.pdf-page-selector-actions{width:100%}.pdf-page-selector-actions .btn{flex:1}.pdf-page-checkboxes{max-height:142px}.pdf-page-check{min-width:82px;justify-content:flex-start}}
 @media(max-width:1200px){.dependant-row{grid-template-columns:repeat(2,minmax(0,1fr))}.dependant-row .btn{width:auto}.insured-under-card{grid-template-columns:1fr 1fr}}@media(max-width:700px){.dependant-row{grid-template-columns:1fr}.dependant-row .btn{width:auto}.insured-under-card{grid-template-columns:1fr}.client-filter-grid{grid-template-columns:1fr}.client-search-line{grid-template-columns:1fr auto}}
 
 /* V1.9 claims enhancements — V1.8 layout retained */
@@ -273,6 +275,7 @@ button,.btn,.tab{touch-action:manipulation}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script src="libs/jspdf.umd.min.js"></script>
 <script>if(!window.jspdf?.jsPDF){document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"><\/script>')}</script>
 <script src="libs/jspdf.plugin.autotable.min.js"></script>
@@ -631,7 +634,7 @@ button,.btn,.tab{touch-action:manipulation}
       <h3 id="changelogTitle">What’s New</h3>
       <button class="changelog-close" type="button" onclick="closeChangelog()">Close</button>
     </div>
-    <div class="changelog-scroll"><div class="changelog-entry"><h4>V2.1</h4><ul><li>Google Login / Drive-ready cloud autosave with persistent-session reconnect and local fallback.</li><li>Claims remaining-benefit indicator; AMR and TCM/Chiro claim types.</li><li>Automatic premium-paid and average annual return notes for investment/endowment policies.</li><li>Surrender value date, age-at-policy-date display, preserved remark line breaks, and improved name capitalization.</li><li>Compact/Split premium view (Cash: Monthly/Annual/Single; CPF: Annual/Single), persistent across sessions and respected by PDF export.</li><li>Protection and Wealth summaries now default to the current client’s own coverage and include linked policies owned under another profile when the current client is the insured person.</li><li>More compact summary rows; centred summary-table content and equal Cash/CPF premium block widths in both Compact and Split views.</li></ul></div>
+    <div class="changelog-scroll"><div class="changelog-entry"><h4>V2.1</h4><ul><li>Financial Report preview now supports checkbox page selection, Select All / Deselect All, and downloading only the selected pages.</li><li>Google Login / Drive-ready cloud autosave with persistent-session reconnect and local fallback.</li><li>Claims remaining-benefit indicator; AMR and TCM/Chiro claim types.</li><li>Automatic premium-paid and average annual return notes for investment/endowment policies.</li><li>Surrender value date, age-at-policy-date display, preserved remark line breaks, and improved name capitalization.</li><li>Compact/Split premium view (Cash: Monthly/Annual/Single; CPF: Annual/Single), persistent across sessions and respected by PDF export.</li><li>Protection and Wealth summaries now default to the current client’s own coverage and include linked policies owned under another profile when the current client is the insured person.</li><li>More compact summary rows; centred summary-table content and equal Cash/CPF premium block widths in both Compact and Split views.</li></ul></div>
     <div class="changelog-entry">
       <h4>V2.0</h4>
       <ul>
@@ -3083,48 +3086,99 @@ async function renderPdfForMobilePreview(bytes,body){
 async function previewGeneratedPDF(doc,fileName,previewTitle='Financial Report Preview'){
   closeDocumentPreview();
   const blob=doc.output('blob');
+  const sourceBytes=new Uint8Array(await blob.arrayBuffer());
   previewObjectUrl=URL.createObjectURL(blob);
   const body=document.getElementById('previewBody'),title=document.getElementById('previewTitle'),dl=document.getElementById('previewDownloadBtn');
-  title.textContent=previewTitle;dl.textContent='Save / Download PDF';
-  dl.onclick=async()=>{
-    // Save from the jsPDF document itself so the browser receives the intended filename
-    // instead of a temporary blob/object-URL identifier.
+  const pageCount=typeof doc.getNumberOfPages==='function'?doc.getNumberOfPages():(doc.internal?.getNumberOfPages?.()||1);
+  const safeFileName=String(fileName||'Document.pdf').endsWith('.pdf')?String(fileName||'Document.pdf'):String(fileName||'Document')+'.pdf';
+
+  title.textContent=previewTitle;
+  dl.textContent='Download Selected Pages';
+
+  body.innerHTML=`<div class="pdf-page-selector">
+    <div class="pdf-page-selector-head">
+      <div><div class="pdf-page-selector-title">Choose pages to download</div><div id="pdfPageSelectionCount" class="pdf-page-selector-count">${pageCount} of ${pageCount} pages selected</div></div>
+      <div class="pdf-page-selector-actions">
+        <button class="btn" type="button" id="pdfSelectAllBtn">Select All</button>
+        <button class="btn" type="button" id="pdfDeselectAllBtn">Deselect All</button>
+      </div>
+    </div>
+    <div id="pdfPageCheckboxes" class="pdf-page-checkboxes">
+      ${Array.from({length:pageCount},(_,i)=>`<label class="pdf-page-check"><input type="checkbox" class="pdf-page-checkbox" value="${i+1}" checked><span>Page ${i+1}</span></label>`).join('')}
+    </div>
+  </div>
+  <div id="generatedPdfViewer" class="generated-pdf-viewer"></div>`;
+
+  const viewer=document.getElementById('generatedPdfViewer');
+  const checks=()=>Array.from(body.querySelectorAll('.pdf-page-checkbox'));
+  const selectedPages=()=>checks().filter(x=>x.checked).map(x=>Number(x.value));
+  const updateSelectionState=()=>{
+    const count=selectedPages().length;
+    const counter=document.getElementById('pdfPageSelectionCount');
+    if(counter)counter.textContent=`${count} of ${pageCount} page${pageCount===1?'':'s'} selected`;
+    dl.disabled=count===0;
+    dl.textContent=count===pageCount?'Download Full Report':`Download Selected Pages (${count})`;
+  };
+  checks().forEach(cb=>cb.addEventListener('change',updateSelectionState));
+  document.getElementById('pdfSelectAllBtn')?.addEventListener('click',()=>{checks().forEach(cb=>cb.checked=true);updateSelectionState()});
+  document.getElementById('pdfDeselectAllBtn')?.addEventListener('click',()=>{checks().forEach(cb=>cb.checked=false);updateSelectionState()});
+
+  async function downloadBlob(pdfBlob,name){
+    const url=URL.createObjectURL(pdfBlob);
     try{
-      const safeFileName=String(fileName||'Document.pdf').endsWith('.pdf')?String(fileName||'Document.pdf'):String(fileName||'Document')+'.pdf';
-      if(typeof doc.save==='function'){
-        doc.save(safeFileName);
-        return;
-      }
-      const file=new File([blob],safeFileName,{type:'application/pdf'});
-      if(navigator.canShare?.({files:[file]})&&navigator.share){
-        await navigator.share({files:[file],title:safeFileName});
+      const file=new File([pdfBlob],name,{type:'application/pdf'});
+      if(isMobilePdfPreview()&&navigator.canShare?.({files:[file]})&&navigator.share){
+        await navigator.share({files:[file],title:name});
         return;
       }
       const a=document.createElement('a');
-      a.href=previewObjectUrl;a.download=safeFileName;a.rel='noopener';
+      a.href=url;a.download=name;a.rel='noopener';
       document.body.appendChild(a);a.click();a.remove();
+    }finally{
+      setTimeout(()=>URL.revokeObjectURL(url),1500);
+    }
+  }
+
+  dl.onclick=async()=>{
+    const selected=selectedPages();
+    if(!selected.length)return;
+    try{
+      if(selected.length===pageCount&&typeof doc.save==='function'){
+        doc.save(safeFileName);
+        return;
+      }
+      if(!window.PDFLib?.PDFDocument)throw new Error('Page selection library is unavailable.');
+      const source=await PDFLib.PDFDocument.load(sourceBytes);
+      const output=await PDFLib.PDFDocument.create();
+      const indices=selected.map(n=>n-1);
+      const copied=await output.copyPages(source,indices);
+      copied.forEach(page=>output.addPage(page));
+      const bytes=await output.save();
+      const selectedBlob=new Blob([bytes],{type:'application/pdf'});
+      await downloadBlob(selectedBlob,safeFileName);
     }catch(err){
       if(err?.name==='AbortError')return;
-      console.error('PDF save failed',err);
-      const a=document.createElement('a');a.href=previewObjectUrl;a.download=fileName||'Document.pdf';a.rel='noopener';document.body.appendChild(a);a.click();a.remove();
+      console.error('Selected-page PDF save failed',err);
+      alert('The selected pages could not be prepared. Please try again or select all pages to download the full report.');
     }
   };
+
   document.getElementById('previewBackdrop')?.classList.add('show');
+  updateSelectionState();
+
   if(!isMobilePdfPreview()){
-    body.innerHTML=`<iframe src="${previewObjectUrl}" title="${esc(previewTitle)}"></iframe>`;
+    viewer.innerHTML=`<iframe src="${previewObjectUrl}" title="${esc(previewTitle)}"></iframe>`;
     return;
   }
-  body.innerHTML='<div class="pdf-preview-loading">Preparing mobile PDF preview…</div>';
+  viewer.innerHTML='<div class="pdf-preview-loading">Preparing mobile PDF preview…</div>';
   try{
-    const bytes=new Uint8Array(await blob.arrayBuffer());
-    await renderPdfForMobilePreview(bytes,body);
+    await renderPdfForMobilePreview(sourceBytes,viewer);
   }catch(err){
     console.error('Mobile PDF preview failed',err);
-    body.innerHTML=`<div class="pdf-preview-fallback"><b>Preview could not be rendered on this device.</b><span>You can open the PDF in your browser or save it directly.</span><button class="btn primary" type="button" id="previewOpenPdfBtn">Open PDF</button></div>`;
+    viewer.innerHTML=`<div class="pdf-preview-fallback"><b>Preview could not be rendered on this device.</b><span>You can open the PDF in your browser or download the selected pages directly.</span><button class="btn primary" type="button" id="previewOpenPdfBtn">Open PDF</button></div>`;
     document.getElementById('previewOpenPdfBtn')?.addEventListener('click',()=>window.open(previewObjectUrl,'_blank','noopener'));
   }
 }
-
 
 
 let activeProposalOption='A';
