@@ -305,6 +305,7 @@ button,.btn,.tab{touch-action:manipulation}
       <button class="btn" onclick="saveData()">Save File</button>
       <button class="btn" onclick="loadData()">Load File</button>
       <button class="btn gold" onclick="exportFinancialReportPDF()">Export Financial Report PDF</button>
+      <button class="btn primary" onclick="shareFinancialReportToClient()">Share to Client</button>
     </div>
   </div>
 
@@ -634,7 +635,7 @@ button,.btn,.tab{touch-action:manipulation}
       <h3 id="changelogTitle">What’s New</h3>
       <button class="changelog-close" type="button" onclick="closeChangelog()">Close</button>
     </div>
-    <div class="changelog-scroll"><div class="changelog-entry"><h4>V2.1</h4><ul><li>Fixed blank Edit Policy pop-ups by resolving policies by their unique policy ID, including after summary filtering or sorting.</li><li>Financial Report preview now supports checkbox page selection, Select All / Deselect All, and downloading only the selected pages.</li><li>Google Login / Drive-ready cloud autosave with persistent-session reconnect and local fallback.</li><li>Claims remaining-benefit indicator; AMR and TCM/Chiro claim types.</li><li>Automatic premium-paid and average annual return notes for investment/endowment policies.</li><li>Surrender value date, age-at-policy-date display, preserved remark line breaks, and improved name capitalization.</li><li>Compact/Split premium view (Cash: Monthly/Annual/Single; CPF: Annual/Single), persistent across sessions and respected by PDF export.</li><li>Protection and Wealth summaries now default to the current client’s own coverage and include linked policies owned under another profile when the current client is the insured person.</li><li>More compact summary rows; centred summary-table content and equal Cash/CPF premium block widths in both Compact and Split views.</li></ul></div>
+    <div class="changelog-scroll"><div class="changelog-entry"><h4>V2.1</h4><ul><li>Added Share to Client for Financial Reports: uses the saved client email, page selection, Google Drive client folders, PDF update/reuse and email-specific viewer sharing.</li><li>Fixed blank Edit Policy pop-ups by resolving policies by their unique policy ID, including after summary filtering or sorting.</li><li>Financial Report preview now supports checkbox page selection, Select All / Deselect All, and downloading only the selected pages.</li><li>Google Login / Drive-ready cloud autosave with persistent-session reconnect and local fallback.</li><li>Claims remaining-benefit indicator; AMR and TCM/Chiro claim types.</li><li>Automatic premium-paid and average annual return notes for investment/endowment policies.</li><li>Surrender value date, age-at-policy-date display, preserved remark line breaks, and improved name capitalization.</li><li>Compact/Split premium view (Cash: Monthly/Annual/Single; CPF: Annual/Single), persistent across sessions and respected by PDF export.</li><li>Protection and Wealth summaries now default to the current client’s own coverage and include linked policies owned under another profile when the current client is the insured person.</li><li>More compact summary rows; centred summary-table content and equal Cash/CPF premium block widths in both Compact and Split views.</li></ul></div>
     <div class="changelog-entry">
       <h4>V2.0</h4>
       <ul>
@@ -1605,6 +1606,97 @@ async function assertNoDriveConflict(){
     return false;
   }
   return true;
+}
+
+
+async function findDriveChildFolder(parentId,name){
+  const q=encodeURIComponent(`name='${driveQ(name)}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)&orderBy=modifiedTime desc&pageSize=20`);
+  const d=await r.json();
+  return d.files?.[0]?.id||'';
+}
+async function createDriveChildFolder(parentId,name){
+  const r=await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',parents:[parentId]})
+  });
+  const d=await r.json();
+  return d.id||'';
+}
+async function ensureDriveChildFolder(parentId,name){
+  let id=await findDriveChildFolder(parentId,name);
+  if(!id)id=await createDriveChildFolder(parentId,name);
+  if(!id)throw new Error('Unable to create Google Drive folder: '+name);
+  return id;
+}
+async function findDrivePdfInFolder(parentId,name){
+  const q=encodeURIComponent(`name='${driveQ(name)}' and '${parentId}' in parents and mimeType='application/pdf' and trashed=false`);
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,webViewLink)&orderBy=modifiedTime desc&pageSize=20`);
+  const d=await r.json();
+  return d.files?.[0]||null;
+}
+async function createDrivePdf(parentId,name,blob){
+  const boundary='dtps_pdf_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+  const meta={name,mimeType:'application/pdf',parents:[parentId]};
+  const body=new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
+    JSON.stringify(meta),
+    `\r\n--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`,
+    blob,
+    `\r\n--${boundary}--`
+  ],{type:'multipart/related; boundary='+boundary});
+  const r=await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
+    method:'POST',
+    headers:{'Content-Type':'multipart/related; boundary='+boundary},
+    body
+  });
+  return await r.json();
+}
+async function updateDrivePdf(fileId,blob){
+  const r=await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,name,webViewLink`,{
+    method:'PATCH',
+    headers:{'Content-Type':'application/pdf'},
+    body:blob
+  });
+  return await r.json();
+}
+async function ensureDriveViewerPermission(fileId,email){
+  let existing=null;
+  try{
+    const r=await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?fields=permissions(id,type,role,emailAddress)&pageSize=100`);
+    const d=await r.json();
+    existing=(d.permissions||[]).find(p=>p.type==='user'&&String(p.emailAddress||'').toLowerCase()===String(email||'').toLowerCase());
+  }catch(err){
+    console.warn('Could not list existing Drive permissions; attempting to add viewer permission.',err);
+  }
+  if(existing)return existing.id;
+  const r=await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?sendNotificationEmail=true&fields=id`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({type:'user',role:'reader',emailAddress:email})
+  });
+  const d=await r.json();
+  return d.id||'';
+}
+async function shareClientReportBlob(blob,clientName,email){
+  if(!googleAccessToken)throw new Error('Connect Google Drive before sharing a client report.');
+  const cleanName=String(clientName||'').trim();
+  const cleanEmail=String(email||'').trim();
+  if(!cleanName)throw new Error('Client name is missing.');
+  if(!cleanEmail||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail))throw new Error('A valid client email is required.');
+  if(!driveFolderId)await ensureDriveFolder();
+  const reportsFolderId=await ensureDriveChildFolder(driveFolderId,'Client Reports');
+  const clientFolderId=await ensureDriveChildFolder(reportsFolderId,cleanName);
+  const pdfName=cleanName+' - Financial Report.pdf';
+  let file=await findDrivePdfInFolder(clientFolderId,pdfName);
+  if(file?.id)file=await updateDrivePdf(file.id,blob);
+  else file=await createDrivePdf(clientFolderId,pdfName,blob);
+  if(!file?.id)throw new Error('Google Drive did not return the shared PDF file ID.');
+  await ensureDriveViewerPermission(file.id,cleanEmail);
+  const metaResponse=await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?fields=id,name,webViewLink`);
+  const meta=await metaResponse.json();
+  return {fileId:file.id,fileName:pdfName,url:meta.webViewLink||file.webViewLink||'',email:cleanEmail};
 }
 
 async function findDriveFolder(){
@@ -3095,7 +3187,7 @@ async function renderPdfForMobilePreview(bytes,body){
     await page.render({canvasContext:canvas.getContext('2d',{alpha:false}),viewport}).promise;
   }
 }
-async function previewGeneratedPDF(doc,fileName,previewTitle='Financial Report Preview'){
+async function previewGeneratedPDF(doc,fileName,previewTitle='Financial Report Preview',options={}){
   closeDocumentPreview();
   const blob=doc.output('blob');
   const sourceBytes=new Uint8Array(await blob.arrayBuffer());
@@ -3103,11 +3195,15 @@ async function previewGeneratedPDF(doc,fileName,previewTitle='Financial Report P
   const body=document.getElementById('previewBody'),title=document.getElementById('previewTitle'),dl=document.getElementById('previewDownloadBtn');
   const pageCount=typeof doc.getNumberOfPages==='function'?doc.getNumberOfPages():(doc.internal?.getNumberOfPages?.()||1);
   const safeFileName=String(fileName||'Document.pdf').endsWith('.pdf')?String(fileName||'Document.pdf'):String(fileName||'Document')+'.pdf';
+  const shareMode=options?.mode==='share';
+  const shareEmail=String(options?.email||'').trim();
+  const shareClientName=String(options?.clientName||'').trim();
 
   title.textContent=previewTitle;
-  dl.textContent='Download Selected Pages';
+  dl.textContent=shareMode?'Share Selected Pages':'Download Selected Pages';
 
   body.innerHTML=`<div class="pdf-page-selector">
+    ${shareMode?`<div style="margin-bottom:10px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:#fff"><div style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--muted);letter-spacing:.04em">Share with client</div><div style="margin-top:4px;font-weight:800;color:var(--navy)">${esc(shareClientName||'Client')}</div><div style="margin-top:2px;font-size:12px;color:var(--muted)">${esc(shareEmail||'No email saved')}</div><div id="pdfShareStatus" class="ai-status" style="margin-top:7px"></div></div>`:''}
     <div class="pdf-page-selector-head">
       <div><div class="pdf-page-selector-title">Choose pages to download</div><div id="pdfPageSelectionCount" class="pdf-page-selector-count">${pageCount} of ${pageCount} pages selected</div></div>
       <div class="pdf-page-selector-actions">
@@ -3129,7 +3225,9 @@ async function previewGeneratedPDF(doc,fileName,previewTitle='Financial Report P
     const counter=document.getElementById('pdfPageSelectionCount');
     if(counter)counter.textContent=`${count} of ${pageCount} page${pageCount===1?'':'s'} selected`;
     dl.disabled=count===0;
-    dl.textContent=count===pageCount?'Download Full Report':`Download Selected Pages (${count})`;
+    dl.textContent=shareMode
+      ?(count===pageCount?'Share Full Report':`Share Selected Pages (${count})`)
+      :(count===pageCount?'Download Full Report':`Download Selected Pages (${count})`);
   };
   checks().forEach(cb=>cb.addEventListener('change',updateSelectionState));
   document.getElementById('pdfSelectAllBtn')?.addEventListener('click',()=>{checks().forEach(cb=>cb.checked=true);updateSelectionState()});
@@ -3151,27 +3249,55 @@ async function previewGeneratedPDF(doc,fileName,previewTitle='Financial Report P
     }
   }
 
+  async function selectedPdfBlob(selected){
+    if(selected.length===pageCount)return blob;
+    if(!window.PDFLib?.PDFDocument)throw new Error('Page selection library is unavailable.');
+    const source=await PDFLib.PDFDocument.load(sourceBytes);
+    const output=await PDFLib.PDFDocument.create();
+    const copied=await output.copyPages(source,selected.map(n=>n-1));
+    copied.forEach(page=>output.addPage(page));
+    const bytes=await output.save();
+    return new Blob([bytes],{type:'application/pdf'});
+  }
+
   dl.onclick=async()=>{
     const selected=selectedPages();
     if(!selected.length)return;
+    const originalText=dl.textContent;
     try{
+      dl.disabled=true;
+      if(shareMode){
+        if(!shareEmail)throw new Error('This client does not have an email address saved in Client Information.');
+        if(!googleAccessToken)throw new Error('Connect Google Drive before using Share to Client.');
+        const ok=confirm('Share this report with '+shareEmail+' as a Google Drive viewer?');
+        if(!ok)return;
+        dl.textContent='Sharing…';
+        const shareBlob=await selectedPdfBlob(selected);
+        const result=await shareClientReportBlob(shareBlob,shareClientName,shareEmail);
+        const status=document.getElementById('pdfShareStatus');
+        if(status){
+          status.className='ai-status good';
+          status.innerHTML='Shared successfully with <b>'+esc(result.email)+'</b>.'+(result.url?` <button class="btn" type="button" id="copyClientShareLink" style="margin-left:7px;padding:5px 8px">Copy Link</button>`:'');
+          if(result.url)document.getElementById('copyClientShareLink')?.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(result.url);showSaveToast('Client report link copied')}catch(_){prompt('Copy this client report link:',result.url)}});
+        }
+        dl.textContent='Shared ✓';
+        showSaveToast('Financial Report shared with '+result.email);
+        return;
+      }
+
       if(selected.length===pageCount&&typeof doc.save==='function'){
         doc.save(safeFileName);
         return;
       }
-      if(!window.PDFLib?.PDFDocument)throw new Error('Page selection library is unavailable.');
-      const source=await PDFLib.PDFDocument.load(sourceBytes);
-      const output=await PDFLib.PDFDocument.create();
-      const indices=selected.map(n=>n-1);
-      const copied=await output.copyPages(source,indices);
-      copied.forEach(page=>output.addPage(page));
-      const bytes=await output.save();
-      const selectedBlob=new Blob([bytes],{type:'application/pdf'});
+      const selectedBlob=await selectedPdfBlob(selected);
       await downloadBlob(selectedBlob,safeFileName);
     }catch(err){
       if(err?.name==='AbortError')return;
-      console.error('Selected-page PDF save failed',err);
-      alert('The selected pages could not be prepared. Please try again or select all pages to download the full report.');
+      console.error(shareMode?'Client report share failed':'Selected-page PDF save failed',err);
+      alert((shareMode?'Could not share the Financial Report: ':'The selected pages could not be prepared: ')+(err?.message||'Unknown error'));
+    }finally{
+      if(dl.textContent!=='Shared ✓')dl.textContent=originalText;
+      dl.disabled=selectedPages().length===0;
     }
   };
 
@@ -3523,7 +3649,7 @@ async function addCapturedElementSinglePage(doc,title,element,pageNo){
   return pageNo;
 }
 
-async function exportFinancialReportPDFWithJsPDF(){
+async function exportFinancialReportPDFWithJsPDF(options={}){
   // Export must follow the live Premium View the user is looking at now.
   // Embedded browsers may restore a select visually before localStorage catches up,
   // so do not rely on the stored setting alone here.
@@ -3604,7 +3730,26 @@ async function exportFinancialReportPDFWithJsPDF(){
   const safeName=String(c.clientName||'Client').trim().replace(/[\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').replace(/-+/g,'-').replace(/^-+|-+$/g,'')||'Client';
   const lastUpdatedRaw=c.updatedOn||today();
   const lastUpdated=(formatDate(lastUpdatedRaw)||formatDate(today())||String(lastUpdatedRaw)).replace(/[\/:*?"<>|]+/g,'-');
-  previewGeneratedPDF(doc,`${safeName}-Financial Report-${lastUpdated}.pdf`);
+  previewGeneratedPDF(doc,`${safeName}-Financial Report-${lastUpdated}.pdf`,options?.mode==='share'?'Share Financial Report':'Financial Report Preview',options);
+}
+
+async function shareFinancialReportToClient(){
+  try{
+    const client=activeClient()?.client||{};
+    const clientName=String(client.clientName||'').trim();
+    const email=String(client.email||'').trim();
+    if(!clientName){alert('Select a client before sharing a Financial Report.');return}
+    if(!email){alert('This client does not have an email address saved. Add the email under Client Information first, then try again.');return}
+    if(!googleAccessToken){alert('Connect Google Drive before using Share to Client.');return}
+    if(!window.jspdf?.jsPDF || typeof window.jspdf.jsPDF.API.autoTable!=='function'){
+      alert('The PDF engine did not load. Please refresh and try again.');
+      return;
+    }
+    await exportFinancialReportPDFWithJsPDF({mode:'share',clientName,email});
+  }catch(err){
+    console.error('Share to Client failed:',err);
+    alert('Could not prepare the client report: '+(err?.message||'Unknown error'));
+  }
 }
 
 async function exportFinancialReportPDF(){
